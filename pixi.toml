@@ -27,4 +27,4 @@ torchaudio = ">=2.5.1,<3"
 werkzeug = "==2.2.2" 
 [pypi-dependencies]
 opencv-python = ">=4.5.5.64"
-zephir = { path = 'H:\Process_temporary\WJH\zephir_modifypoints\zephir', editable = true }
+zephir = { path = "zephir", editable = true }
