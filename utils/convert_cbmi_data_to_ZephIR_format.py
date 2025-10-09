@@ -69,12 +69,13 @@ def rescale_image(image, target_min, target_max, source_min = None, source_max =
 def create_zephir_data(mat_folder_path, zephir_folder, vol_num, **kwargs):
     """
     从包含.mat文件的文件夹中读取cell array数据，转换为ZephIR格式的data.h5
+    每100个时间帧保存为一个独立的data.h5文件，存放在独立的子文件夹中
     
     Parameters:
     mat_folder_path: 包含.mat文件的文件夹路径
     zephir_folder: ZephIR输出文件夹路径
     vol_num: 处理的时间帧数量
-    kwargs: 其他参数，包括volume_shape, denoise_range等
+    kwargs: 其他参数，包括volume_shape, denoise_range, chunk_size等
     
     Returns:
     int: 处理的时间帧数量
@@ -82,6 +83,7 @@ def create_zephir_data(mat_folder_path, zephir_folder, vol_num, **kwargs):
     # 从kwargs中提取参数
     volume_shape = kwargs.get('volume_shape', (1024, 1024, 18))
     denoise_range = kwargs.get('denoise_range', (120, 1000))
+    chunk_size = kwargs.get('chunk_size', 100)  # 每个文件包含的时间帧数量
         
     # 获取所有.mat文件并排序
     mat_files = [file for file in os.listdir(mat_folder_path) if file.endswith('.mat')]
@@ -144,107 +146,313 @@ def create_zephir_data(mat_folder_path, zephir_folder, vol_num, **kwargs):
     if not all_volumes:
         raise ValueError("No valid volume data found in any .mat files")
     
-    # 将所有体数据组合成ZephIR格式
+    # 确定最终处理的数据量
     vol_num_mat = len(all_volumes)
     if vol_num_mat != vol_num:
         vol_num = min(vol_num_mat, vol_num)
     slice_num = all_volumes[0].shape[0]  # z轴切片数
     height, width = all_volumes[0].shape[1], all_volumes[0].shape[2]
     
-    # 创建ZephIR格式的数据数组: (time, channel, z, y, x)
-    img_data = np.empty((vol_num, 1, slice_num, height, width), dtype=np.uint8)
-    
-    for i, volume in enumerate(all_volumes[:vol_num]):
-        img_data[i, 0] = volume
-    
-    # 保存数据
+    # 创建主文件夹
     os.makedirs(zephir_folder, exist_ok=True)
-    data_path = os.path.join(zephir_folder, 'data.h5')
-    with h5py.File(data_path, 'w') as hf:
-        hf.create_dataset('data', data=img_data, chunks=True)
     
-    print(f"Successfully created data.h5 with {vol_num} timepoints")
+    # 按chunk_size分批保存数据
+    num_chunks = (vol_num + chunk_size - 1) // chunk_size  # 向上取整
+    
+    for chunk_idx in range(num_chunks):
+        start_t = chunk_idx * chunk_size
+        end_t = min(start_t + chunk_size, vol_num)
+        
+        # 创建子文件夹名称，例如 vol_0_99, vol_100_199
+        subfolder_name = f"vol_{start_t}_{end_t-1}"
+        subfolder_path = os.path.join(zephir_folder, subfolder_name)
+        os.makedirs(subfolder_path, exist_ok=True)
+        
+        # 当前chunk的时间帧数量
+        chunk_vol_num = end_t - start_t
+        
+        # 创建当前chunk的数据数组: (time, channel, z, y, x)
+        img_data = np.empty((chunk_vol_num, 1, slice_num, height, width), dtype=np.uint8)
+        
+        for i in range(chunk_vol_num):
+            img_data[i, 0] = all_volumes[start_t + i]
+        
+        # 保存当前chunk的数据
+        data_path = os.path.join(subfolder_path, 'data.h5')
+        with h5py.File(data_path, 'w') as hf:
+            hf.create_dataset('data', data=img_data, chunks=True)
+        
+        print(f"Successfully created {subfolder_name}/data.h5 with {chunk_vol_num} timepoints (t={start_t} to {end_t-1})")
+    
+    print(f"Total: Created {num_chunks} chunks with {vol_num} timepoints")
     return vol_num
     
 
 def create_zephir_annotations(neuron_pt_tuple, zephir_folder_path, **kwargs):
     '''
     input: all neuron_pt_tuple (time x neuron_pt_tuple)
-    output: annotations.h5
+    output: annotations.h5 (分chunk保存在各个子文件夹中)
     '''
     # get parameter
     width = kwargs.get('width', 1024)
     height = kwargs.get('height', 1024)
     depth = kwargs.get('depth', 18)
     z_ratio = kwargs.get('z_ratio', 5)
+    chunk_size = kwargs.get('chunk_size', 100)  # 每个文件包含的时间帧数量
 
-    # copy from Rong's code
-    h5file_path = os.path.join(zephir_folder_path, 'annotations.h5')
-    l = len(neuron_pt_tuple)
-    if os.path.exists(h5file_path):
-        os.remove(h5file_path)
-        print('deleting the existing annotations.h5')
-    try:
-        with h5py.File(h5file_path, 'a') as f:
-            if '/x' not in f:
-                max_shape = (None,)
-                f.create_dataset('/x', shape=(0,), maxshape=max_shape, dtype='float32')
-                f.create_dataset('/y', shape=(0,), maxshape=max_shape, dtype='float32')
-                f.create_dataset('/z', shape=(0,), maxshape=max_shape, dtype='float32')
-                f.create_dataset('/id', shape=(0,), maxshape=max_shape, dtype='uint32')
-                f.create_dataset('/parent_id', shape=(0,), maxshape=max_shape, dtype='uint16')
-                f.create_dataset('/worldline_id', shape=(0,), maxshape=max_shape, dtype='uint8')
-                f.create_dataset('/provenance', shape=(0,), maxshape=max_shape, dtype='S4')
-                f.create_dataset('/t_idx', shape=(0,), maxshape=max_shape, dtype='uint16')
+    total_t = len(neuron_pt_tuple)
+    num_chunks = (total_t + chunk_size - 1) // chunk_size  # 向上取整
+    
+    # 按chunk分批处理
+    for chunk_idx in range(num_chunks):
+        start_t = chunk_idx * chunk_size
+        end_t = min(start_t + chunk_size, total_t)
+        
+        # 创建子文件夹名称
+        subfolder_name = f"vol_{start_t}_{end_t-1}"
+        subfolder_path = os.path.join(zephir_folder_path, subfolder_name)
+        os.makedirs(subfolder_path, exist_ok=True)
+        
+        # 当前chunk的annotations文件路径
+        h5file_path = os.path.join(subfolder_path, 'annotations.h5')
+        
+        if os.path.exists(h5file_path):
+            os.remove(h5file_path)
+            print(f'Deleting existing {subfolder_name}/annotations.h5')
+        
+        try:
+            with h5py.File(h5file_path, 'a') as f:
+                if '/x' not in f:
+                    max_shape = (None,)
+                    f.create_dataset('/x', shape=(0,), maxshape=max_shape, dtype='float32')
+                    f.create_dataset('/y', shape=(0,), maxshape=max_shape, dtype='float32')
+                    f.create_dataset('/z', shape=(0,), maxshape=max_shape, dtype='float32')
+                    f.create_dataset('/id', shape=(0,), maxshape=max_shape, dtype='uint32')
+                    f.create_dataset('/parent_id', shape=(0,), maxshape=max_shape, dtype='uint16')
+                    f.create_dataset('/worldline_id', shape=(0,), maxshape=max_shape, dtype='uint8')
+                    f.create_dataset('/provenance', shape=(0,), maxshape=max_shape, dtype='S4')
+                    f.create_dataset('/t_idx', shape=(0,), maxshape=max_shape, dtype='uint16')
+                    f.create_dataset('/abs_t_idx', shape=(0,), maxshape=max_shape, dtype='uint16')  # 绝对时间索引
 
-            for volume_index, neuron_pt_tuple in enumerate(neuron_pt_tuple):
-                n = neuron_pt_tuple.shape[0]
-                new_size = f['/x'].shape[0] + n
-                f['/x'].resize(new_size, axis=0)
-                f['/x'][-n:] = neuron_pt_tuple[:, 0] / width
-                f['/y'].resize(new_size, axis=0)
-                f['/y'][-n:] = neuron_pt_tuple[:, 1] / height
-                f['/z'].resize(new_size, axis=0)
-                f['/z'][-n:] = neuron_pt_tuple[:, 2] / (z_ratio * depth) # z-axis normalization factor: frame_num * (z_unit / XOY_unit)
-                # f['/id'].resize(new_size, axis=0)
-                # f['/id'][-n:] = np.zeros(n)
-                f['/worldline_id'].resize(new_size, axis=0)
-                f['/worldline_id'][-n:] = np.arange(0, n)
-                f['/provenance'].resize(new_size, axis=0)
-                f['/provenance'][-n:] = np.array(['ANTT']*n, dtype='S4')
-                f['/t_idx'].resize(new_size, axis=0)
-                f['/t_idx'][-n:] = np.full(n, volume_index, dtype='uint16')
+                # 处理当前chunk内的每个时间帧
+                for local_t_idx in range(end_t - start_t):
+                    global_t_idx = start_t + local_t_idx  # 全局时间索引
+                    neuron_data = neuron_pt_tuple[global_t_idx]
+                    n = neuron_data.shape[0]
+                    new_size = f['/x'].shape[0] + n
+                    
+                    f['/x'].resize(new_size, axis=0)
+                    f['/x'][-n:] = neuron_data[:, 0] / width
+                    f['/y'].resize(new_size, axis=0)
+                    f['/y'][-n:] = neuron_data[:, 1] / height
+                    f['/z'].resize(new_size, axis=0)
+                    f['/z'][-n:] = neuron_data[:, 2] / (z_ratio * depth)
+                    
+                    f['/worldline_id'].resize(new_size, axis=0)
+                    f['/worldline_id'][-n:] = np.arange(0, n)
+                    f['/provenance'].resize(new_size, axis=0)
+                    f['/provenance'][-n:] = np.array(['ANTT']*n, dtype='S4')
+                    
+                    # t_idx使用相对于当前chunk的局部索引（相对于对应的data.h5）
+                    f['/t_idx'].resize(new_size, axis=0)
+                    f['/t_idx'][-n:] = np.full(n, local_t_idx, dtype='uint16')
+                    
+                    # abs_t_idx使用全局绝对时间索引
+                    f['/abs_t_idx'].resize(new_size, axis=0)
+                    f['/abs_t_idx'][-n:] = np.full(n, global_t_idx, dtype='uint16')
 
-                # 计算当前全局起始索引（即之前已写入的数据总量）
-                current_start = new_size - n  # 等同于 f['/id'].shape[0] - n
-                # 生成从 current_start 开始的连续整数序列
-                id_values = np.arange(current_start, current_start + n, dtype='uint32')
-                # 追加到 id 和 parent_id 数据集
-                f['/id'].resize(new_size, axis=0)
-                f['/id'][-n:] = id_values + 1
-                f['/parent_id'].resize(new_size, axis=0)
-                f['/parent_id'][-n:] = np.full(n, volume_index+1, dtype='uint16')  # parent_id 与 t相同
-                
-            print('finish creating new annotations.h5')
+                    # 计算当前chunk内的起始索引
+                    current_start = new_size - n
+                    id_values = np.arange(current_start, current_start + n, dtype='uint32')
+                    
+                    f['/id'].resize(new_size, axis=0)
+                    f['/id'][-n:] = id_values + 1
+                    f['/parent_id'].resize(new_size, axis=0)
+                    f['/parent_id'][-n:] = np.full(n, local_t_idx+1, dtype='uint16')
+                    
+                print(f'Finished creating {subfolder_name}/annotations.h5 (t={start_t} to {end_t-1})')
 
-    except Exception as e:
-        print("An error occurred:", e)
-        return None
+        except Exception as e:
+            print(f"An error occurred in {subfolder_name}: {e}")
+            return None
 
+    print(f'Total: Created {num_chunks} annotation chunks')
     return None
 
 
 import json
 def create_metadata_json(zephir_folder_path, volume_num, **kwargs):
+    """
+    为每个chunk子文件夹创建metadata.json文件
+    """
     width = kwargs.get('width', 1024)
     height = kwargs.get('height', 1024)
     depth = kwargs.get('depth', 18)
-    metadata = {"shape_t": volume_num, "shape_c": 1, "shape_z": depth, "shape_y": height, "shape_x": width, "dtype": "uint8"}
-    with open(os.path.join(zephir_folder_path, 'metadata.json'), 'w') as f:
-        json.dump(metadata, f)
+    chunk_size = kwargs.get('chunk_size', 100)
+    
+    num_chunks = (volume_num + chunk_size - 1) // chunk_size
+    
+    for chunk_idx in range(num_chunks):
+        start_t = chunk_idx * chunk_size
+        end_t = min(start_t + chunk_size, volume_num)
+        chunk_vol_num = end_t - start_t
+        
+        # 创建子文件夹路径
+        subfolder_name = f"vol_{start_t}_{end_t-1}"
+        subfolder_path = os.path.join(zephir_folder_path, subfolder_name)
+        os.makedirs(subfolder_path, exist_ok=True)
+        
+        # 为当前chunk创建metadata
+        metadata = {
+            "shape_t": chunk_vol_num,
+            "shape_c": 1,
+            "shape_z": depth,
+            "shape_y": height,
+            "shape_x": width,
+            "dtype": "uint8",
+            # "global_t_start": start_t,  # 添加全局时间范围信息
+            # "global_t_end": end_t - 1
+        }
+        
+        metadata_path = os.path.join(subfolder_path, 'metadata.json')
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        print(f'Created {subfolder_name}/metadata.json (local t=0 to {chunk_vol_num-1}, global t={start_t} to {end_t-1})')
+    
+    print(f'Total: Created {num_chunks} metadata files')
+
+def merge_chunked_annotations(zephir_folder_path, output_path=None, **kwargs):
+    """
+    合并所有chunk子文件夹中的annotations.h5文件为一个完整的annotations.h5
+    使用abs_t_idx作为t_idx，从而可以用load_neuron_pt_tuple_from_annotations转换
+    
+    Parameters:
+    zephir_folder_path: ZephIR文件夹路径，包含所有vol_*子文件夹
+    output_path: 输出合并后的annotations.h5路径，默认为zephir_folder_path/annotations_merged.h5
+    kwargs: 其他参数
+    
+    Returns:
+    str: 合并后的annotations.h5文件路径
+    """
+    if output_path is None:
+        output_path = os.path.join(zephir_folder_path, 'annotations_merged.h5')
+    
+    # 查找所有vol_*子文件夹
+    subfolders = []
+    for item in os.listdir(zephir_folder_path):
+        item_path = os.path.join(zephir_folder_path, item)
+        if os.path.isdir(item_path) and item.startswith('vol_'):
+            subfolders.append(item)
+    
+    # 按照起始时间排序子文件夹
+    def extract_start_t(folder_name):
+        # 从 "vol_0_99" 中提取起始时间 0
+        parts = folder_name.split('_')
+        return int(parts[1])
+    
+    subfolders.sort(key=extract_start_t)
+    
+    if not subfolders:
+        print(f"No vol_* subfolders found in {zephir_folder_path}")
+        return None
+    
+    print(f"Found {len(subfolders)} chunks to merge: {subfolders}")
+    
+    # 删除已存在的合并文件
+    if os.path.exists(output_path):
+        os.remove(output_path)
+        print(f'Deleted existing {output_path}')
+    
+    # 创建合并后的文件
+    try:
+        with h5py.File(output_path, 'a') as f_out:
+            # 创建数据集
+            max_shape = (None,)
+            f_out.create_dataset('/x', shape=(0,), maxshape=max_shape, dtype='float32')
+            f_out.create_dataset('/y', shape=(0,), maxshape=max_shape, dtype='float32')
+            f_out.create_dataset('/z', shape=(0,), maxshape=max_shape, dtype='float32')
+            f_out.create_dataset('/id', shape=(0,), maxshape=max_shape, dtype='uint32')
+            f_out.create_dataset('/parent_id', shape=(0,), maxshape=max_shape, dtype='uint16')
+            f_out.create_dataset('/worldline_id', shape=(0,), maxshape=max_shape, dtype='uint8')
+            f_out.create_dataset('/provenance', shape=(0,), maxshape=max_shape, dtype='S4')
+            f_out.create_dataset('/t_idx', shape=(0,), maxshape=max_shape, dtype='uint16')
+            
+            total_points = 0
+            global_id_offset = 0
+            
+            # 逐个读取并合并每个chunk的annotations
+            for subfolder in tqdm(subfolders, desc="Merging chunks"):
+                annotation_path = os.path.join(zephir_folder_path, subfolder, 'annotations.h5')
+                
+                if not os.path.exists(annotation_path):
+                    print(f"Warning: {annotation_path} not found, skipping")
+                    continue
+                
+                with h5py.File(annotation_path, 'r') as f_in:
+                    # 检查是否有abs_t_idx
+                    if '/abs_t_idx' not in f_in:
+                        print(f"Warning: {annotation_path} does not contain /abs_t_idx, skipping")
+                        continue
+                    
+                    n = f_in['/x'].shape[0]
+                    if n == 0:
+                        continue
+                    
+                    new_size = f_out['/x'].shape[0] + n
+                    
+                    # 复制所有数据
+                    f_out['/x'].resize(new_size, axis=0)
+                    f_out['/x'][-n:] = f_in['/x'][:]
+                    
+                    f_out['/y'].resize(new_size, axis=0)
+                    f_out['/y'][-n:] = f_in['/y'][:]
+                    
+                    f_out['/z'].resize(new_size, axis=0)
+                    f_out['/z'][-n:] = f_in['/z'][:]
+                    
+                    f_out['/worldline_id'].resize(new_size, axis=0)
+                    f_out['/worldline_id'][-n:] = f_in['/worldline_id'][:]
+                    
+                    f_out['/provenance'].resize(new_size, axis=0)
+                    f_out['/provenance'][-n:] = f_in['/provenance'][:]
+                    
+                    # 使用abs_t_idx作为合并后的t_idx
+                    f_out['/t_idx'].resize(new_size, axis=0)
+                    f_out['/t_idx'][-n:] = f_in['/abs_t_idx'][:]
+                    
+                    # 重新生成全局唯一的id
+                    new_id_values = np.arange(global_id_offset, global_id_offset + n, dtype='uint32')
+                    f_out['/id'].resize(new_size, axis=0)
+                    f_out['/id'][-n:] = new_id_values + 1
+                    
+                    # parent_id使用abs_t_idx + 1
+                    f_out['/parent_id'].resize(new_size, axis=0)
+                    f_out['/parent_id'][-n:] = f_in['/abs_t_idx'][:] + 1
+                    
+                    total_points += n
+                    global_id_offset += n
+            
+            print(f'Successfully merged {len(subfolders)} chunks with {total_points} total annotation points')
+            print(f'Merged file saved to: {output_path}')
+    
+    except Exception as e:
+        print(f"Error merging annotations: {e}")
+        return None
+    
+    return output_path
 
 #%%
 def convert_cbmi_data_to_ZephIR_format(infer_result_path, mat_folder_path, zephir_folder, **params):
+    """
+    将CBMI数据转换为ZephIR格式，数据按chunk分批保存
+    
+    Parameters:
+    infer_result_path: 推理结果文件路径
+    mat_folder_path: MAT文件夹路径
+    zephir_folder: ZephIR输出文件夹路径
+    params: 其他参数，包括chunk_size（默认100）
+    """
     neuron_pt_tuple, volume_number = load_neuron_pt_tuple(infer_result_path)
     # volume_number = create_zephir_data(mat_folder_path, zephir_folder, volume_number, **params)
     create_zephir_annotations(neuron_pt_tuple[:volume_number], zephir_folder, **params)
@@ -277,7 +485,15 @@ def load_neuron_pt_tuple_from_annotations(annotations_path, **kwargs):
             x_rel = f['/x'][:]  # 相对x坐标 (0-1)
             y_rel = f['/y'][:]  # 相对y坐标 (0-1)
             z_rel = f['/z'][:]  # 相对z坐标 (0-1)
-            t_idx = f['/t_idx'][:]  # 时间索引
+            
+            # 优先使用abs_t_idx（绝对时间索引），如果不存在则使用t_idx
+            if '/abs_t_idx' in f:
+                t_idx = f['/abs_t_idx'][:]  # 使用绝对时间索引
+                print("Using abs_t_idx for time indexing")
+            else:
+                t_idx = f['/t_idx'][:]  # 使用相对时间索引
+                print("Using t_idx for time indexing (abs_t_idx not found)")
+            
             worldline_id = f['/worldline_id'][:]  # 神经元ID
             
             # 转换回绝对坐标
@@ -360,9 +576,9 @@ def convert_annotations_to_neuron_pt_tuple(annotations_path, output_path, **kwar
 
 # %%
 if __name__ == "__main__":
-    infer_result_path = r"I:\WJH\infer\runhui_new\dynamics.h5"
-    zephir_folder =  r'I:\WJH\infer\runhui_new\ZephIR'
-    mat_folder_path = r"I:\WJH\infer\runhui_new\mat"
+    infer_result_path = r"I:\WJH\infer\test\0730\w3\dynamics.h5"
+    zephir_folder =  r'I:\WJH\infer\test\0730\w3\ZephIR'
+    mat_folder_path = r"I:\WJH\infer\test\0730\w3\mat"
     xoy_unit = 0.3
     z_unit = 1.5
     z_ratio = z_unit / xoy_unit
@@ -373,6 +589,15 @@ if __name__ == "__main__":
         depth = 18,
         volume_shape = (1024, 1024, 18),
         denoise_range = (120, 1000),
+        chunk_size = 100,  # 每100个时间帧保存为一个文件
     )
 
     convert_cbmi_data_to_ZephIR_format(infer_result_path, mat_folder_path, zephir_folder, **params)
+    
+    # 可选：合并所有chunk的annotations.h5文件
+    # merged_annotations_path = merge_chunked_annotations(zephir_folder, **params)
+    
+    # 可选：将合并后的annotations.h5转换为neuron_pt_tuple格式
+    # if merged_annotations_path:
+    #     output_npy_path = os.path.join(zephir_folder, 'neuron_pt_tuple.npy')
+    #     convert_annotations_to_neuron_pt_tuple(merged_annotations_path, output_npy_path, **params)
