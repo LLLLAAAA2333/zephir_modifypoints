@@ -14,9 +14,10 @@
 3. 进入该仓库，运行命令`pixi install`安装依赖。
 
 # 使用方法
-1. 将上述文件放在同一目录下，假设路径为`.\data`。
-2. 运行命令`annotator --dataset=.\data --port=5000`，再浏览器使用`localhost:5000`打开GUI。
-3. 在GUI中进行点云坐标的修改，保存后关闭GUI。
+1. `pixi shell`进入pixi的shell环境。 
+2. 将上述文件放在同一目录下，假设路径为`.\data`。
+3. 运行命令`annotator --dataset=.\data --port=5000`，再浏览器使用`localhost:5000`打开GUI。
+4. 在GUI中进行点云坐标的修改，保存后关闭GUI。
 
 ## GUI的快捷键
 - `f`: 前进一个volume
