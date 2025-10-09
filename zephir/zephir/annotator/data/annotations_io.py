@@ -169,11 +169,16 @@ class WorldlineTable(DataclassTableBase):
     def from_annotations(annotations: AnnotationTable):
 
         worldlines = WorldlineTable()
-        worldlines._insert_and_preserve_id(Worldline(id=0))
-
+        
+        # Get unique worldline_ids from annotations
         worldline_ids = np.unique(annotations.df["worldline_id"])
-        for id in worldline_ids:
-            worldlines.insert(Worldline(name=str(id)))
+        
+        # Insert worldlines with preserved IDs to match annotations
+        # This ensures worldline.id matches the worldline_id in annotations
+        for wl_id in worldline_ids:
+            worldlines._insert_and_preserve_id(
+                Worldline(id=int(wl_id), name=str(wl_id))
+            )
 
         return worldlines
 
