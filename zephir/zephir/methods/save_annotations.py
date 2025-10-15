@@ -32,6 +32,24 @@ def save_annotations(
     worldline_id = container.get('worldline_id')
 
     annotation = get_annotation_df(dataset)
+
+    annotations_path = dataset / 'annotations.h5'
+    abs_t_idx_backup = None
+    abs_t_idx_map = None
+
+    if annotations_path.exists():
+        with h5py.File(annotations_path, 'r') as existing_file:
+            if 'abs_t_idx' in existing_file:
+                abs_t_idx_backup = existing_file['abs_t_idx'][:]
+
+    if 'abs_t_idx' in annotation.columns:
+        mapping_source = annotation[['t_idx', 'abs_t_idx']].to_numpy()
+        if mapping_source.size > 0:
+            abs_t_idx_map = {}
+            for t_value, abs_value in mapping_source:
+                t_key = int(t_value)
+                if t_key not in abs_t_idx_map:
+                    abs_t_idx_map[t_key] = int(abs_value)
     
     # saving result to .h5
     print('\nCompiling and saving results to file...')
@@ -115,6 +133,20 @@ def save_annotations(
         else:
             data = np.array(xyz_pd[:, i].astype(np.float32), dtype=columns[c])
         f.create_dataset(c, shape=(xyz_pd.shape[0], ), dtype=columns[c], data=data)
+
+    abs_t_idx_values = None
+    if save_mode == 'o':
+        if abs_t_idx_backup is not None and len(abs_t_idx_backup) == xyz_pd.shape[0]:
+            abs_t_idx_values = abs_t_idx_backup.astype(np.uint32)
+        elif abs_t_idx_map:
+            # Preserve absolute time indices using the previous mapping when lengths differ
+            abs_t_idx_values = np.array([
+                abs_t_idx_map.get(int(round(t_value)), int(round(t_value)))
+                for t_value in xyz_pd[:, 0]
+            ], dtype=np.uint32)
+
+    if abs_t_idx_values is not None:
+        f.create_dataset('abs_t_idx', shape=(xyz_pd.shape[0], ), dtype=np.uint32, data=abs_t_idx_values)
 
     f.close()
 

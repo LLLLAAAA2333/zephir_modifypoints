@@ -33,8 +33,8 @@ def get_annotation_df(dataset: Path) -> pd.DataFrame:
     - worldline_id: track or worldline ID as an integer
     - provenance: scorer or creator of the annotation as a byte string
     """
-    # Define expected fields to load (ignoring extra fields like abs_t_idx)
-    expected_fields = ['id', 't_idx', 'x', 'y', 'z', 'worldline_id', 'parent_id', 'provenance']
+    # Load standard fields while preserving supplemental ones like abs_t_idx when present
+    expected_fields = ['id', 't_idx', 'x', 'y', 'z', 'worldline_id', 'parent_id', 'provenance', 'abs_t_idx']
     
     with h5py.File(dataset / 'annotations.h5', 'r') as f:
         data = pd.DataFrame()

@@ -43,6 +43,7 @@ class Annotation:
     worldline_id: np.uint32 = 0
     parent_id: np.uint32 = 0  # =0 is null/none
     provenance: _S4 = b"NULL"  # unknown
+    abs_t_idx: np.uint32 = np.uint32(0)  # absolute time index, preserved on save
 
     def __post_init__(self):
 
@@ -54,13 +55,23 @@ class Annotation:
         self.worldline_id = np.uint32(self.worldline_id)
         self.parent_id = np.uint32(self.parent_id)
         self.provenance = np.string_(self.provenance)
+        self.abs_t_idx = np.uint32(self.abs_t_idx)
 
         # if self.id == b"":
         #     self.id = get_random_base64_id()
 
     def to_tuple(self) -> tuple:
-        return (self.id, self.t_idx, self.x, self.y, self.z, self.worldline_id,
-                self.parent_id, self.provenance)
+        return (
+            self.id,
+            self.t_idx,
+            self.x,
+            self.y,
+            self.z,
+            self.worldline_id,
+            self.parent_id,
+            self.provenance,
+            self.abs_t_idx,
+        )
 
     def to_dict(self) -> dict:
         return asdict(self)
