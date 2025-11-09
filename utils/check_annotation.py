@@ -1,6 +1,12 @@
 from collections import Counter
 import h5py
 import numpy as np
+import argparse
+
+def _build_parser():
+    parser = argparse.ArgumentParser(description="Summarize per-frame worldline anomalies.")
+    parser.add_argument("--annotations_path", help="Path to annotations.h5")
+    return parser
 
 def summarize_worldlines(annotations_path):
     """
@@ -52,5 +58,8 @@ def summarize_worldlines(annotations_path):
     return issues
 
 if __name__ == "__main__":
-    annotations_path = r"I:\WJH\infer\manual\registration_annotation\20250730\w3_freelymoving\w3_manual\w3\vol_0_99\annotations.h5"
-    summarize_worldlines(annotations_path)
+    # annotations_path = r"I:\WJH\infer\manual\registration_annotation\20250730\w3_freelymoving\w3_manual\w3\vol_0_99\annotations.h5"
+    # summarize_worldlines(annotations_path)
+    parser = _build_parser()
+    args = parser.parse_args()
+    summarize_worldlines(args.annotations_path)
