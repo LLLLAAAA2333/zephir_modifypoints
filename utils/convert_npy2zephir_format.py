@@ -275,6 +275,34 @@ def convert_npy_to_ZephIR_format(image_folder, neuron_pt_tuple_path, zephir_fold
     # if reverted_neuron_pt_tuple is not None:
     #     np.save(output_npy_path, reverted_neuron_pt_tuple)
     #     print(f"Reverted neuron_pt_tuple saved to {output_npy_path}")
+def convert_annotations_to_neuron_pt_tuple(
+    annotations_path,
+    output_path,
+    template_neuron_pt_tuple_path=None,
+    **kwargs,
+):
+    """
+    Convert ZephIR annotations.h5 back to neuron_pt_tuple.npy format.
+
+    Parameters:
+    annotations_path: 输入的annotations.h5文件路径
+    output_path: 输出的neuron_pt_tuple文件路径 (.npy或.h5)
+    template_neuron_pt_tuple_path: 模板文件路径(.npy或.h5)，与上者二选一即可
+    kwargs: 包含width, height, depth, z_ratio等参数
+    """
+    neuron_pt_tuple_xyz = load_neuron_pt_tuple_from_annotations(
+        annotations_path,
+        **kwargs,
+    )
+
+    if template_neuron_pt_tuple_path is not None:
+        template_neuron_pt_tuple = np.load(template_neuron_pt_tuple_path)
+        neuron_pt_tuple_xyz[:,:,3:] = template_neuron_pt_tuple[:,:,3:]
+        print(f"Loaded template neuron_pt_tuple from {template_neuron_pt_tuple_path}")
+    
+    np.save(output_path, neuron_pt_tuple_xyz)
+    print(f"Converted neuron_pt_tuple saved to {output_path}")
+
 
 # %%
 if __name__ == "__main__":
