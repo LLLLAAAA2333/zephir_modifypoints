@@ -292,8 +292,8 @@ def convert_annotations_to_neuron_pt_tuple(
 
     Parameters:
     annotations_path: 输入的annotations.h5文件路径
-    output_path: 输出的neuron_pt_tuple文件路径 (.npy或.h5)
-    template_neuron_pt_tuple_path: 模板文件路径(.npy或.h5)，与上者二选一即可
+    output_path: 输出的neuron_pt_tuple文件路径 (.npy)
+    template_neuron_pt_tuple_path: 模板文件路径(.npy)
     kwargs: 包含width, height, depth, z_ratio等参数
     """
     neuron_pt_tuple_xyz = load_neuron_pt_tuple_from_annotations(
@@ -301,10 +301,66 @@ def convert_annotations_to_neuron_pt_tuple(
         **kwargs,
     )
 
+    if neuron_pt_tuple_xyz is None:
+        raise ValueError("Failed to load neuron_pt_tuple data from annotations.")
+
     if template_neuron_pt_tuple_path is not None:
         template_neuron_pt_tuple = np.load(template_neuron_pt_tuple_path)
-        neuron_pt_tuple_xyz[:,:,3:] = template_neuron_pt_tuple[:,:,3:]
         print(f"Loaded template neuron_pt_tuple from {template_neuron_pt_tuple_path}")
+
+        target_time, target_neurons, target_features = neuron_pt_tuple_xyz.shape
+        template_time, template_neurons, template_features = template_neuron_pt_tuple.shape
+
+        if template_time != target_time:
+            print(
+                "Warning: template time dimension does not match annotations; "
+                "applying values over the overlapping range only."
+            )
+
+        time_overlap = min(template_time, target_time)
+        neuron_overlap = min(template_neurons, target_neurons)
+
+        tail_dim = max(target_features - 3, 0)
+        template_tail_dim = max(template_features - 3, 0)
+
+        if template_neurons > target_neurons:
+            print(
+                "Warning: template has more neurons than annotations; "
+                "truncating template to match target neuron count."
+            )
+        elif template_neurons < target_neurons:
+            print(
+                "Notice: template has fewer neurons than annotations; "
+                "remaining neurons will use fallback feature values."
+            )
+
+        if tail_dim > 0:
+            fallback_tail_values = np.array([5.0, 5.0, 15.0, 0.0, 0.0], dtype=np.float32)
+            fallback_tail = np.zeros(tail_dim, dtype=np.float32)
+            copy_len = min(tail_dim, fallback_tail_values.size)
+            fallback_tail[:copy_len] = fallback_tail_values[:copy_len]
+
+            neuron_pt_tuple_xyz[:, :, 3:] = fallback_tail.reshape(1, 1, tail_dim)
+
+            feature_overlap = min(template_tail_dim, tail_dim)
+
+            if feature_overlap > 0 and time_overlap > 0 and neuron_overlap > 0:
+                template_slice = template_neuron_pt_tuple[
+                    :time_overlap,
+                    :neuron_overlap,
+                    3:3 + feature_overlap,
+                ]
+                neuron_pt_tuple_xyz[
+                    :time_overlap,
+                    :neuron_overlap,
+                    3:3 + feature_overlap,
+                ] = template_slice
+
+        elif template_tail_dim > 0 and tail_dim == 0:
+            print(
+                "Notice: template provides additional features, but target array "
+                "has no room beyond XYZ; skipping template extras."
+            )
     
     np.save(output_path, neuron_pt_tuple_xyz)
     print(f"Converted neuron_pt_tuple saved to {output_path}")
