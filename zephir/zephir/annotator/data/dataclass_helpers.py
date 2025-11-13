@@ -44,8 +44,16 @@ class DataclassTableBase:
                 self.df = data.copy()
             else:
                 self.df = pd.concat([self.df, data])
-        self.next_id = np.max(self.df['id']) + 1
-        if np.isnan(self.next_id):
+
+        self._ensure_columns()
+
+        if 'id' in self.df and len(self.df['id']) > 0:
+            max_id = self.df['id'].max()
+            if pd.isna(max_id):
+                self.next_id = 1
+            else:
+                self.next_id = int(max_id) + 1
+        else:
             self.next_id = 1
 
         self._fix_types()
@@ -56,6 +64,50 @@ class DataclassTableBase:
 
         for k in self.df.columns:
             self.df[k] = self.df[k].astype(self.column_types[k])
+
+    def _ensure_columns(self):
+        """Backfill missing columns so older annotation files remain usable."""
+
+        row_count = len(self.df.index)
+        for column, dtype in self.column_types.items():
+            if column not in self.df.columns:
+                self.df[column] = self._default_series(column, dtype, row_count)
+
+        if row_count == 0:
+            return
+
+        if 'abs_t_idx' in self.df.columns:
+            series = self.df['abs_t_idx']
+            if series.isna().any():
+                if 't_idx' in self.df.columns:
+                    self.df['abs_t_idx'] = series.fillna(self.df['t_idx'])
+                else:
+                    self.df['abs_t_idx'] = series.fillna(0)
+            if self.df['abs_t_idx'].isna().any():
+                self.df['abs_t_idx'] = self.df['abs_t_idx'].fillna(0)
+
+    def _default_series(self, column: str, dtype, row_count: int) -> pd.Series:
+        index = self.df.index
+        np_dtype = np.dtype(dtype)
+
+        if row_count == 0:
+            return pd.Series(dtype=np_dtype)
+
+        if column == 'abs_t_idx' and 't_idx' in self.df.columns:
+            values = self.df['t_idx'].to_numpy()
+            values = values.astype(np.uint32, copy=False)
+            return pd.Series(values, index=index)
+
+        if np.issubdtype(np_dtype, np.integer):
+            fill_value = np_dtype.type(0)
+        elif np.issubdtype(np_dtype, np.floating):
+            fill_value = np_dtype.type(0.0)
+        elif np_dtype.kind == 'S':
+            fill_value = b''
+        else:
+            fill_value = 0
+
+        return pd.Series(np.full(row_count, fill_value, dtype=np_dtype), index=index)
 
     def _insert_and_preserve_id(self, data):
 
