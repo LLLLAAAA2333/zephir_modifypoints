@@ -266,15 +266,15 @@ def convert_npy_to_ZephIR_format(image_folder, neuron_pt_tuple_path, zephir_fold
 
     print("\nConversion to ZephIR format complete.")
     
-    # 5. Convert back and save
-    annotations_path = os.path.join(zephir_folder, 'annotations.h5')
-    output_npy_path = os.path.join(zephir_folder, 'neuron_pt_tuple_reverted.npy')
+    # # 5. Convert back and save example
+    # annotations_path = os.path.join(zephir_folder, 'annotations.h5')
+    # output_npy_path = os.path.join(zephir_folder, 'neuron_pt_tuple_reverted.npy')
     
-    reverted_neuron_pt_tuple = load_neuron_pt_tuple_from_annotations(annotations_path, **params)
+    # reverted_neuron_pt_tuple = load_neuron_pt_tuple_from_annotations(annotations_path, **params)
     
-    if reverted_neuron_pt_tuple is not None:
-        np.save(output_npy_path, reverted_neuron_pt_tuple)
-        print(f"Reverted neuron_pt_tuple saved to {output_npy_path}")
+    # if reverted_neuron_pt_tuple is not None:
+    #     np.save(output_npy_path, reverted_neuron_pt_tuple)
+    #     print(f"Reverted neuron_pt_tuple saved to {output_npy_path}")
 
 # %%
 if __name__ == "__main__":
