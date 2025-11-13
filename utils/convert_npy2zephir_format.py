@@ -1,22 +1,27 @@
 # %%
 import os
 import sys
-import numpy as np
-import h5py
 import json
-from tqdm import tqdm
 import re
+from pathlib import Path
+
+import h5py
+import numpy as np
+from tqdm import tqdm
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     from utils.logged_operation import logged_operation
 
 def extract_number_from_filename(filename):
-    """从文件名中提取数字，用于排序"""
-    match = re.search(r'\d+', filename)
-    if match:
-        return int(match.group(0))
-    return -1
+    """从文件名中提取数字，用于排序 (已保留以兼容旧逻辑)."""
+    match = re.findall(r'\d+', filename)
+    return int(match[-1]) if match else -1
+
+
+def natural_sort_key(value: str):
+    """使用自然序对字符串进行排序，确保多段数字按数值排序."""
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r'(\d+)', value)]
 
 def rescale_image(image, target_min, target_max, source_min = None, source_max = None):
     """
@@ -54,19 +59,20 @@ def create_zephir_data_from_npy(image_folder, zephir_folder, **kwargs):
     """
     denoise_range = kwargs.get('denoise_range')
     
-    npy_files = [file for file in os.listdir(image_folder) if file.endswith('.npy')]
-    npy_files.sort(key=extract_number_from_filename)
+    npy_paths = sorted(
+        Path(image_folder).glob('*.npy'),
+        key=lambda path: natural_sort_key(path.name)
+    )
     
-    if not npy_files:
+    if not npy_paths:
         raise ValueError(f"No .npy files found in {image_folder}")
     
-    print(f"Found {len(npy_files)} .npy files")
+    print(f"Found {len(npy_paths)} .npy files")
     
     all_volumes = []
     
-    for i, npy_file in enumerate(tqdm(npy_files, desc="Processing npy files")):
-        filepath = os.path.join(image_folder, npy_file)
-        volume = np.load(filepath) # (y, x, z)
+    for npy_path in tqdm(npy_paths, desc="Processing npy files"):
+        volume = np.load(npy_path)  # (y, x, z)
         
         if volume is not None and volume.size > 0:
             # (y, x, z) -> (z, y, x)
@@ -78,7 +84,7 @@ def create_zephir_data_from_npy(image_folder, zephir_folder, **kwargs):
             volume_scaled = rescale_image(volume, 0, 255).astype(np.uint8)
             all_volumes.append(volume_scaled)
         else:
-            print(f"Warning: No valid data in {npy_file}")
+            print(f"Warning: No valid data in {npy_path.name}")
             
     if not all_volumes:
         raise ValueError("No valid volume data found in any .npy files")
@@ -117,7 +123,7 @@ def create_zephir_annotations_from_npy(neuron_pt_tuple, zephir_folder, **kwargs)
     
     if os.path.exists(h5file_path):
         os.remove(h5file_path)
-        print(f'Deleting existing annotations.h5')
+        print('Deleting existing annotations.h5')
         
     try:
         with h5py.File(h5file_path, 'a') as f:
