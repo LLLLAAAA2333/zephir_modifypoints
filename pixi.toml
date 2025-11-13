@@ -2,7 +2,7 @@
 authors = ["JH Wang <1125623896@qq.com>"]
 channels = ["pytorch","conda-forge"]
 name = "ZephIRPointModify"
-platforms = ["win-64"]
+platforms = ["win-64", "linux-64"]
 version = "0.1.0"
 
 [tasks]
