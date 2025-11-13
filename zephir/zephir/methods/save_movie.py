@@ -31,9 +31,10 @@ def save_movie(
 
     # visualizing result and writing to video
     print('\nSaving prediction to video...')
+    # Using MJPEG codec for ImageJ compatibility
     overview_rec = cv2.VideoWriter(
-            str(dataset / 'annotated.mp4'),
-            cv2.VideoWriter_fourcc(*'mp4v'), 10,
+            str(dataset / 'annotated.avi'),
+            cv2.VideoWriter_fourcc(*'MJPG'), 10,
             (img_shape[2] + 2 * img_shape[0],
              img_shape[1] + 2 * img_shape[0]),
             True
