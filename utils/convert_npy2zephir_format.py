@@ -335,7 +335,7 @@ def convert_annotations_to_neuron_pt_tuple(
             )
 
         if tail_dim > 0:
-            fallback_tail_values = np.array([5.0, 5.0, 15.0, 0.0, 0.0], dtype=np.float32)
+            fallback_tail_values = np.array([10.0, 10.0, 15.0, 0.0, 0.0], dtype=np.float32)
             fallback_tail = np.zeros(tail_dim, dtype=np.float32)
             copy_len = min(tail_dim, fallback_tail_values.size)
             fallback_tail[:copy_len] = fallback_tail_values[:copy_len]
