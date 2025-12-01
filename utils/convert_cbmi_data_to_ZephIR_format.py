@@ -56,14 +56,23 @@ def rescale_image(image, target_min, target_max, source_min = None, source_max =
             source_max = np.max(image[image < 1000])
         else:
             source_max = original_max
-    image_float32 = image.astype(np.float32)
+    
     # Check that source_min is less than source_max
     if source_min >= source_max:
         raise ValueError("source_min must be less than source_max")
-    # Compute the rescaled image with values adjusted to the new range and clip to ensure
-    # values stay within target_min and target_max
-    return np.clip((image_float32 - source_min) / (source_max - source_min) * (target_max - target_min) + target_min,
-                             target_min, target_max).astype(image.dtype)
+
+    # Memory efficient implementation using in-place operations
+    image_float32 = image.astype(np.float32)
+    
+    scale = (target_max - target_min) / (source_max - source_min)
+    offset = target_min - source_min * scale
+    
+    # In-place operations to save memory
+    np.multiply(image_float32, scale, out=image_float32)
+    np.add(image_float32, offset, out=image_float32)
+    np.clip(image_float32, target_min, target_max, out=image_float32)
+    
+    return image_float32.astype(image.dtype)
 
 
 def create_zephir_data(mat_folder_path, zephir_folder, vol_num, root_t_index=None, **kwargs):
@@ -97,116 +106,137 @@ def create_zephir_data(mat_folder_path, zephir_folder, vol_num, root_t_index=Non
     
     print(f"Found {len(mat_files)} MATLAB files")
     
-    # 收集所有时间点的数据
-    all_volumes = []
+    # 预扫描：计算总时间点并定位 root_volume
     total_timepoints = 0
+    mat_file_infos = []
+    root_volume = None
     
-    # 计算总的时间点数
+    # 第一次遍历：获取文件信息并找到 root_volume
+    current_t = 0
+    root_found = False
+    
+    print("Scanning files...")
     for mat_file in mat_files:
         filepath = os.path.join(mat_folder_path, mat_file)
         file_info = get_matlab_file_info(filepath)
-        if file_info and file_info['is_cell_array']:
-            total_timepoints += file_info['shape'][1]
-        elif file_info:
-            total_timepoints += 1
-    
-    print(f"Total timepoints to process: {total_timepoints}")
-    
-    # 处理每个.mat文件
-    for i, mat_file in enumerate(tqdm(mat_files)):
-        with logged_operation(display_context=f"Processing {mat_file} ({i+1}/{len(mat_files)})"):
-            filepath = os.path.join(mat_folder_path, mat_file)
-            file_info = get_matlab_file_info(filepath)
-            
-            if file_info is None:
-                print(f"Warning: Could not get info for {mat_file}")
-                continue
-            
-            # 确定时间点数量
+        mat_file_infos.append(file_info)
+        
+        if file_info:
             if file_info['is_cell_array']:
-                num_timepoints = file_info['shape'][1]
+                n_t = file_info['shape'][1]
             else:
-                num_timepoints = 1
+                n_t = 1
             
-            # 读取每个时间点的数据
-            for timepoint_idx in tqdm(range(num_timepoints),desc="Processing"):
-                volume = load_single_timepoint_from_matlab(filepath, timepoint_idx)
-                
-                if volume is not None and volume.size > 0:
-                    # 转置数据以匹配期望的形状 (z, x, y) -> (z, y, x)
-                    volume = np.transpose(volume, (0, 2, 1))
-                    
-                    # 去噪处理
-                    if denoise_range:
-                        volume[(volume < denoise_range[0]) | (volume > denoise_range[1])] = 0
-                    
-                    # 缩放到uint8范围
-                    volume_scaled = rescale_image(volume, 0, 255).astype(np.uint8)
-                    all_volumes.append(volume_scaled)
-                else:
-                    print(f"Warning: No valid data at timepoint {timepoint_idx} in {mat_file}")
-    
-    if not all_volumes:
-        raise ValueError("No valid volume data found in any .mat files")
-    
-    # 确定最终处理的数据量
-    vol_num_mat = len(all_volumes)
-    if vol_num_mat != vol_num:
-        vol_num = min(vol_num_mat, vol_num)
-    root_volume = None
-    if root_t_index is not None:
-        root_t_index = int(root_t_index)
-        if not (0 <= root_t_index < vol_num_mat):
-            raise ValueError(f"root_t_index {root_t_index} is out of range for {vol_num_mat} volumes")
-        root_volume = all_volumes[root_t_index]
-    slice_num = all_volumes[0].shape[0]  # z轴切片数
-    height, width = all_volumes[0].shape[1], all_volumes[0].shape[2]
-    
+            # 如果需要 root_volume 且尚未加载，检查是否在当前文件中
+            if root_t_index is not None and not root_found:
+                if current_t <= root_t_index < current_t + n_t:
+                    local_t = root_t_index - current_t
+                    print(f"Loading root volume from {mat_file} (t={local_t})...")
+                    vol = load_single_timepoint_from_matlab(filepath, local_t)
+                    if vol is not None:
+                        vol = np.transpose(vol, (0, 2, 1))
+                        if denoise_range:
+                            vol[(vol < denoise_range[0]) | (vol > denoise_range[1])] = 0
+                        root_volume = rescale_image(vol, 0, 255).astype(np.uint8)
+                        root_found = True
+            
+            total_timepoints += n_t
+            current_t += n_t
+            
+    print(f"Total timepoints to process: {total_timepoints}")
+    if root_t_index is not None and root_volume is None:
+        raise ValueError(f"root_t_index {root_t_index} is out of range or data could not be loaded")
+
     # 创建主文件夹
     os.makedirs(zephir_folder, exist_ok=True)
     
-    # 按chunk_size分批保存数据
-    num_chunks = (vol_num + chunk_size - 1) // chunk_size  # 向上取整
+    # 准备处理变量
+    current_chunk_volumes = []
+    chunk_idx = 0
+    global_processed_count = 0
     
-    for chunk_idx in range(num_chunks):
-        start_t = chunk_idx * chunk_size
-        end_t = min(start_t + chunk_size, vol_num)
-        
-        # 创建子文件夹名称，例如 vol_0_99, vol_100_199
+    # 辅助函数：写入一个 chunk
+    def write_chunk(volumes, c_idx, start_t):
+        end_t = start_t + len(volumes)
         subfolder_name = f"vol_{start_t}_{end_t-1}"
         subfolder_path = os.path.join(zephir_folder, subfolder_name)
         os.makedirs(subfolder_path, exist_ok=True)
         
-        # 当前chunk的时间帧数量
-        chunk_vol_num = end_t - start_t
+        chunk_vol_num = len(volumes)
         root_offset = 1 if root_volume is not None else 0
         total_frames = chunk_vol_num + root_offset
         
-        # 创建当前chunk的数据数组: (time, channel, z, y, x)
+        slice_num = volumes[0].shape[0]
+        height, width = volumes[0].shape[1], volumes[0].shape[2]
+        
         img_data = np.empty((total_frames, 1, slice_num, height, width), dtype=np.uint8)
+        
         frame_offset = 0
         if root_volume is not None:
             img_data[0, 0] = root_volume
             frame_offset = 1
-        
+            
         for i in range(chunk_vol_num):
-            img_data[frame_offset + i, 0] = all_volumes[start_t + i]
-        
-        # 保存当前chunk的数据
+            img_data[frame_offset + i, 0] = volumes[i]
+            
         data_path = os.path.join(subfolder_path, 'data.h5')
         with h5py.File(data_path, 'w') as hf:
             hf.create_dataset('data', data=img_data, chunks=True)
-        
+            
         if root_volume is not None:
-            print(f"Successfully created {subfolder_name}/data.h5 with {chunk_vol_num} timepoints plus root (t={start_t} to {end_t-1}, root_t={root_t_index})")
+            print(f"Created {subfolder_name}/data.h5 (t={start_t} to {end_t-1}, root_t={root_t_index})")
         else:
-            print(f"Successfully created {subfolder_name}/data.h5 with {chunk_vol_num} timepoints (t={start_t} to {end_t-1})")
-    
+            print(f"Created {subfolder_name}/data.h5 (t={start_t} to {end_t-1})")
+
+    # 第二次遍历：逐个处理并分批写入
+    for i, mat_file in enumerate(tqdm(mat_files, desc="Processing files")):
+        if global_processed_count >= vol_num:
+            break
+            
+        with logged_operation(display_context=f"Processing {mat_file} ({i+1}/{len(mat_files)})"):
+            file_info = mat_file_infos[i]
+            if file_info is None: continue
+            
+            filepath = os.path.join(mat_folder_path, mat_file)
+            num_timepoints = file_info['shape'][1] if file_info['is_cell_array'] else 1
+            
+            for timepoint_idx in range(num_timepoints):
+                if global_processed_count >= vol_num:
+                    break
+                    
+                volume = load_single_timepoint_from_matlab(filepath, timepoint_idx)
+                
+                if volume is not None and volume.size > 0:
+                    volume = np.transpose(volume, (0, 2, 1))
+                    if denoise_range:
+                        volume[(volume < denoise_range[0]) | (volume > denoise_range[1])] = 0
+                    
+                    # 此时内存中只保留当前 chunk 的数据
+                    volume_scaled = rescale_image(volume, 0, 255).astype(np.uint8)
+                    current_chunk_volumes.append(volume_scaled)
+                    global_processed_count += 1
+                    
+                    # 如果当前 chunk 满了，写入磁盘并清空内存
+                    if len(current_chunk_volumes) == chunk_size:
+                        start_t = chunk_idx * chunk_size
+                        write_chunk(current_chunk_volumes, chunk_idx, start_t)
+                        current_chunk_volumes = [] # 释放内存
+                        chunk_idx += 1
+                else:
+                    print(f"Warning: No valid data at timepoint {timepoint_idx} in {mat_file}")
+
+    # 处理最后一个不满的 chunk
+    if current_chunk_volumes:
+        start_t = chunk_idx * chunk_size
+        write_chunk(current_chunk_volumes, chunk_idx, start_t)
+        chunk_idx += 1
+
     if root_volume is not None:
-        print(f"Total: Created {num_chunks} chunks with {vol_num} timepoints plus shared root")
+        print(f"Total: Created {chunk_idx} chunks with {global_processed_count} timepoints plus shared root")
     else:
-        print(f"Total: Created {num_chunks} chunks with {vol_num} timepoints")
-    return vol_num
+        print(f"Total: Created {chunk_idx} chunks with {global_processed_count} timepoints")
+        
+    return global_processed_count
     
 
 def create_zephir_annotations(neuron_pt_tuple, zephir_folder_path, root_t_index=None, **kwargs):
@@ -789,9 +819,9 @@ def convert_annotations_to_neuron_pt_tuple(
 
 # %%
 if __name__ == "__main__":
-    # infer_result_path = r"Z:\data4\Ikrma\20250730\w1\w1_freelymoving\dynamics.h5"
-    zephir_folder =  r'I:\WJH\infer\manual\registration_annotation\20250730\w3_freelymoving\w3_manual\w3'
-    # mat_folder_path = r"Z:\data4\Ikrma\20250730\w1\w1_freelymoving\red"
+    infer_result_path = r"Y:\20251106_w5_proxy\dynamics.h5"
+    zephir_folder =  r'I:\WJH\infer\manual\registration_annotation\20251106\w5\zephir_data'
+    mat_folder_path = r"Z:\data4\Ikrma\20251106\w5_AWCON\w5\red"
     xoy_unit = 0.3
     z_unit = 1.5
     z_ratio = z_unit / xoy_unit
@@ -802,14 +832,14 @@ if __name__ == "__main__":
         depth = 18,
         volume_shape = (1024, 1024, 18),
         denoise_range = (120, 1000),
-        root_t_index = 158,
+        root_t_index = 134,
         chunk_size = 100,  # 每100个时间帧保存为一个文件
     )
 
-    # convert_cbmi_data_to_ZephIR_format(infer_result_path, mat_folder_path, zephir_folder, **params)
+    convert_cbmi_data_to_ZephIR_format(infer_result_path, mat_folder_path, zephir_folder, **params)
     
-    merged_annotations_path = merge_chunked_annotations(zephir_folder, **params)
+    # merged_annotations_path = merge_chunked_annotations(zephir_folder, **params)
 
-    # # # if merged_annotations_path:
-    output_npy_path = os.path.join(zephir_folder, 'neuron_pt_tuple.npy')
-    convert_annotations_to_neuron_pt_tuple(merged_annotations_path, output_npy_path,template_neuron_pt_tuple_path=r'I:\WJH\infer\manual\registration_annotation\20250730\w3_freelymoving\neuron_pt_tuple.npy', **params)
+    # # # # if merged_annotations_path:
+    # output_npy_path = os.path.join(zephir_folder, 'neuron_pt_tuple.npy')
+    # convert_annotations_to_neuron_pt_tuple(merged_annotations_path, output_npy_path,template_neuron_pt_tuple_path=r'I:\WJH\infer\manual\registration_annotation\20250730\w3_freelymoving\neuron_pt_tuple.npy', **params)
