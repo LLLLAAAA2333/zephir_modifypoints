@@ -369,7 +369,7 @@ def convert_annotations_to_neuron_pt_tuple(
                 "has no room beyond XYZ; skipping template extras."
             )
     
-    np.save(output_path, neuron_pt_tuple_xyz)
+    np.save(output_path, neuron_pt_tuple_xyz.squeeze())
     print(f"Converted neuron_pt_tuple saved to {output_path}")
 
 
