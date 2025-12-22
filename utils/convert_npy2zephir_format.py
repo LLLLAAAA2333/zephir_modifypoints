@@ -309,7 +309,14 @@ def convert_annotations_to_neuron_pt_tuple(
         print(f"Loaded template neuron_pt_tuple from {template_neuron_pt_tuple_path}")
 
         target_time, target_neurons, target_features = neuron_pt_tuple_xyz.shape
-        template_time, template_neurons, template_features = template_neuron_pt_tuple.shape
+
+        if template_neuron_pt_tuple.ndim == 2:
+            template_neurons, template_features = template_neuron_pt_tuple.shape
+            template_time = 1
+            # Expand to 3D: (1, neurons, features)
+            template_neuron_pt_tuple = template_neuron_pt_tuple[np.newaxis, :, :]
+        elif template_neuron_pt_tuple.ndim == 3:
+            template_time, template_neurons, template_features = template_neuron_pt_tuple.shape
 
         if template_time != target_time:
             print(
