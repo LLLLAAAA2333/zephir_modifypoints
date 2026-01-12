@@ -30,12 +30,12 @@
     "start-and-test": "concurrently \"npm run start\" \"npm run test -watch\"",
     "start": "concurrently \"npm run server\" \"npm run client\"",
     "server": "set FLASK_APP=../main.py && flask run",
-    "client": "react-scripts start",
-    "build": "react-scripts build",
-    "deploy": "xcopy \"build\" \"..\\server\\client_build\" /e /i ",
+    "client": "set NODE_OPTIONS=--openssl-legacy-provider && react-scripts start",
+    "build": "set NODE_OPTIONS=--openssl-legacy-provider && react-scripts build",
+    "deploy": "xcopy \"build\" \"..\\client_build\" /e /i /y",
     "make": "npm run build && npm run deploy",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "test": "set NODE_OPTIONS=--openssl-legacy-provider && react-scripts test",
+    "eject": "set NODE_OPTIONS=--openssl-legacy-provider && react-scripts eject"
   },
   "eslintConfig": {
     "extends": "react-app"
