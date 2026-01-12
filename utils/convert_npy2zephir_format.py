@@ -346,8 +346,6 @@ def convert_annotations_to_neuron_pt_tuple(
             if t < template_time:
                 # Update XYZ (indices 0, 1, 2)
                 new_neuron_pt_tuple[t, new_idx, 0:3] = coords
-            else:
-                 pass # Time out of bounds for template, ignored for now or should resize?
     
     # 5. Save
     np.save(output_path, new_neuron_pt_tuple.squeeze())
