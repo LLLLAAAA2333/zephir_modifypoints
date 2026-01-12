@@ -204,8 +204,14 @@ def create_metadata_json_from_npy(zephir_folder, volume_num, **kwargs):
         
     print(f'Created metadata.json for {volume_num} timepoints')
 
-def load_neuron_pt_tuple_from_annotations(annotations_path, **kwargs):
-    """Load ZephIR annotations back into a ``neuron_pt_tuple`` tensor."""
+def load_neuron_pt_tuple_from_annotations(annotations_path, return_dict=False, **kwargs):
+    """
+    Load ZephIR annotations back into a ``neuron_pt_tuple`` tensor or a dictionary.
+    
+    Args:
+        return_dict (bool): If True, return a dictionary {worldline_id: {t_idx: [x, y, z]}}
+                            instead of a numpy array.
+    """
 
     width = kwargs.get('width', 1024)
     height = kwargs.get('height', 1024)
@@ -220,17 +226,39 @@ def load_neuron_pt_tuple_from_annotations(annotations_path, **kwargs):
 
             t_indices = f['/t_idx'][:]
             if t_indices.size == 0:
-                return np.empty((0, 0, 8), dtype=np.float32)
+                 if return_dict:
+                     return {}
+                 return np.empty((0, 0, 8), dtype=np.float32)
 
-            max_t = t_indices.max()
             worldline_ids = f['/worldline_id'][:]
-            max_neurons = worldline_ids.max() + 1
-            
-            neuron_pt_tuple = np.full((max_t + 1, max_neurons, 8), np.nan, dtype=np.float32)
-
             x = f['/x'][:] * width
             y = f['/y'][:] * height
             z = f['/z'][:] * (z_ratio * depth)
+            
+            # --- Dictionary Mode ---
+            if return_dict:
+                valid_ids = np.unique(worldline_ids)
+                modify_neuron_coords_dict = {}
+                
+                # Pre-initialize dictionaries for each valid ID
+                for wl_id in valid_ids:
+                    modify_neuron_coords_dict[wl_id] = {}
+                
+                for i in range(len(t_indices)):
+                    t = t_indices[i]
+                    # Note: ZephIR usually uses uint32 for IDs, convert to int for standard dict keys
+                    neuron_idx = int(worldline_ids[i]) 
+                    
+                    modify_neuron_coords_dict[neuron_idx][t] = [x[i], y[i], z[i]]
+                    
+                print(f"Loaded modifications for {len(modify_neuron_coords_dict)} tracks from {annotations_path}")
+                return modify_neuron_coords_dict
+
+            # --- Array Mode (Original Logic) ---
+            max_t = t_indices.max()
+            max_neurons = worldline_ids.max() + 1
+            
+            neuron_pt_tuple = np.full((max_t + 1, max_neurons, 8), np.nan, dtype=np.float32)
 
             for i in range(len(t_indices)):
                 t = t_indices[i]
@@ -246,41 +274,6 @@ def load_neuron_pt_tuple_from_annotations(annotations_path, **kwargs):
         print(f"Error loading annotations from {annotations_path}: {e}")
         return None
 
-def convert_npy_to_ZephIR_format(image_folder, neuron_pt_tuple_path, zephir_folder, **params):
-    """
-    将NPY数据转换为ZephIR格式
-    
-    Parameters:
-    image_folder: 包含.npy图像文件的文件夹
-    neuron_pt_tuple_path: neuron_pt_tuple.npy文件路径
-    zephir_folder: ZephIR输出文件夹路径
-    params: 其他参数
-    """
-    # 1. Load neuron_pt_tuple
-    neuron_pt_tuple = np.load(neuron_pt_tuple_path)
-    print(f"Loaded neuron_pt_tuple from {neuron_pt_tuple_path} with shape {neuron_pt_tuple.shape}")
-    
-    # 2. Create data.h5
-    volume_number, shape_params = create_zephir_data_from_npy(image_folder, zephir_folder, **params)
-    params.update(shape_params)
-
-    # 3. Create annotations.h5
-    create_zephir_annotations_from_npy(neuron_pt_tuple, zephir_folder, **params)
-    
-    # 4. Create metadata.json
-    create_metadata_json_from_npy(zephir_folder, volume_number, **params)
-
-    print("\nConversion to ZephIR format complete.")
-    
-    # # 5. Convert back and save example
-    # annotations_path = os.path.join(zephir_folder, 'annotations.h5')
-    # output_npy_path = os.path.join(zephir_folder, 'neuron_pt_tuple_reverted.npy')
-    
-    # reverted_neuron_pt_tuple = load_neuron_pt_tuple_from_annotations(annotations_path, **params)
-    
-    # if reverted_neuron_pt_tuple is not None:
-    #     np.save(output_npy_path, reverted_neuron_pt_tuple)
-    #     print(f"Reverted neuron_pt_tuple saved to {output_npy_path}")
 def convert_annotations_to_neuron_pt_tuple(
     annotations_path,
     output_path,
@@ -288,89 +281,77 @@ def convert_annotations_to_neuron_pt_tuple(
     **kwargs,
 ):
     """
-    Convert ZephIR annotations.h5 back to neuron_pt_tuple.npy format.
-
-    Parameters:
-    annotations_path: 输入的annotations.h5文件路径
-    output_path: 输出的neuron_pt_tuple文件路径 (.npy)
-    template_neuron_pt_tuple_path: 模板文件路径(.npy)
-    kwargs: 包含width, height, depth, z_ratio等参数
+    Convert ZephIR annotations.h5 back to neuron_pt_tuple.npy format. 
+    Handles deleted tracks by removing them from the template.
     """
-    neuron_pt_tuple_xyz = load_neuron_pt_tuple_from_annotations(
+    
+    # 1. Load Modifications as Dictionary
+    modify_neuron_coords_dict = load_neuron_pt_tuple_from_annotations(
         annotations_path,
+        return_dict=True,
         **kwargs,
     )
 
-    if neuron_pt_tuple_xyz is None:
+    if modify_neuron_coords_dict is None:
         raise ValueError("Failed to load neuron_pt_tuple data from annotations.")
 
-    if template_neuron_pt_tuple_path is not None:
-        template_neuron_pt_tuple = np.load(template_neuron_pt_tuple_path)
-        print(f"Loaded template neuron_pt_tuple from {template_neuron_pt_tuple_path}")
+    # 2. Load Template
+    if template_neuron_pt_tuple_path is None:
+        raise ValueError("template_neuron_pt_tuple_path is required for this operation.")
+        
+    template_neuron_pt_tuple = np.load(template_neuron_pt_tuple_path)
+    print(f"Loaded template neuron_pt_tuple from {template_neuron_pt_tuple_path}")
 
-        target_time, target_neurons, target_features = neuron_pt_tuple_xyz.shape
-
-        if template_neuron_pt_tuple.ndim == 2:
-            template_neurons, template_features = template_neuron_pt_tuple.shape
-            template_time = 1
-            # Expand to 3D: (1, neurons, features)
-            template_neuron_pt_tuple = template_neuron_pt_tuple[np.newaxis, :, :]
-        elif template_neuron_pt_tuple.ndim == 3:
-            template_time, template_neurons, template_features = template_neuron_pt_tuple.shape
-
-        if template_time != target_time:
-            print(
-                "Warning: template time dimension does not match annotations; "
-                "applying values over the overlapping range only."
-            )
-
-        time_overlap = min(template_time, target_time)
-        neuron_overlap = min(template_neurons, target_neurons)
-
-        tail_dim = max(target_features - 3, 0)
-        template_tail_dim = max(template_features - 3, 0)
-
-        if template_neurons > target_neurons:
-            print(
-                "Warning: template has more neurons than annotations; "
-                "truncating template to match target neuron count."
-            )
-        elif template_neurons < target_neurons:
-            print(
-                "Notice: template has fewer neurons than annotations; "
-                "remaining neurons will use fallback feature values."
-            )
-
-        if tail_dim > 0:
-            fallback_tail_values = np.array([14.0, 14.0, 15.0, 0.0, 0.0], dtype=np.float32)
-            fallback_tail = np.zeros(tail_dim, dtype=np.float32)
-            copy_len = min(tail_dim, fallback_tail_values.size)
-            fallback_tail[:copy_len] = fallback_tail_values[:copy_len]
-
-            neuron_pt_tuple_xyz[:, :, 3:] = fallback_tail.reshape(1, 1, tail_dim)
-
-            feature_overlap = min(template_tail_dim, tail_dim)
-
-            if feature_overlap > 0 and time_overlap > 0 and neuron_overlap > 0:
-                template_slice = template_neuron_pt_tuple[
-                    :time_overlap,
-                    :neuron_overlap,
-                    3:3 + feature_overlap,
-                ]
-                neuron_pt_tuple_xyz[
-                    :time_overlap,
-                    :neuron_overlap,
-                    3:3 + feature_overlap,
-                ] = template_slice
-
-        elif template_tail_dim > 0 and tail_dim == 0:
-            print(
-                "Notice: template provides additional features, but target array "
-                "has no room beyond XYZ; skipping template extras."
-            )
+    # Handle Template Dimensions
+    if template_neuron_pt_tuple.ndim == 2:
+        # Expand to 3D: (1, neurons, features)
+        template_neuron_pt_tuple = template_neuron_pt_tuple[np.newaxis, :, :]
     
-    np.save(output_path, neuron_pt_tuple_xyz.squeeze())
-    print(f"Converted neuron_pt_tuple saved to {output_path}")
+    template_time, template_neurons, template_features = template_neuron_pt_tuple.shape
+
+    # 3. Filter and Reconstruct
+    # Valid IDs are those present in the annotations (modify_neuron_coords_dict)
+    valid_ids = sorted(list(modify_neuron_coords_dict.keys()))
+    new_neuron_count = len(valid_ids)
+    
+    print(f"Reconstructing neuron_pt_tuple: {template_neurons} -> {new_neuron_count} neurons")
+    
+    # Create new array with same time and features, but filtered neuron count
+    new_neuron_pt_tuple = np.full(
+        (template_time, new_neuron_count, template_features), 
+        np.nan, 
+        dtype=np.float32
+    )
+
+    # 4. Map Data
+    for new_idx, original_id in enumerate(valid_ids):
+        # A. Copy from Template (if original ID exists in template)
+        if original_id < template_neurons:
+            new_neuron_pt_tuple[:, new_idx, :] = template_neuron_pt_tuple[:, original_id, :]
+        else:
+            # New track that didn't exist in template
+            tail_dim = max(template_features - 3, 0)
+            if tail_dim > 0:
+                fallback_tail_values = np.array([14.0, 14.0, 15.0, 0.0, 0.0], dtype=np.float32)
+                fallback_tail = np.zeros(tail_dim, dtype=np.float32)
+                copy_len = min(tail_dim, fallback_tail_values.size)
+                fallback_tail[:copy_len] = fallback_tail_values[:copy_len]
+                
+                # Assign to all timepoints for this new neuron
+                new_neuron_pt_tuple[:, new_idx, 3:] = fallback_tail
+
+        # B. Apply Modifications from Annotations
+        track_mods = modify_neuron_coords_dict[original_id]
+        for t, coords in track_mods.items():
+            if t < template_time:
+                # Update XYZ (indices 0, 1, 2)
+                new_neuron_pt_tuple[t, new_idx, 0:3] = coords
+            else:
+                 pass # Time out of bounds for template, ignored for now or should resize?
+    
+    # 5. Save
+    np.save(output_path, new_neuron_pt_tuple.squeeze())
+    print(f"Converted and cleaned neuron_pt_tuple saved to {output_path}")
 
 
 # %%
