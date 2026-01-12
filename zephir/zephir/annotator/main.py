@@ -304,6 +304,18 @@ def handle_worldline(id):
     elif request.method == "DELETE":
 
         app.logger.info("Deleting worldline {}".format(id))
+
+        # Cleanup annotations associated with this worldline
+        try:
+            # Find all annotations with this worldline_id
+            if hasattr(app.annotations, 'df'):
+                 ids_to_delete = app.annotations.df[app.annotations.df['worldline_id'] == id]['id'].tolist()
+                 if ids_to_delete:
+                     app.annotations.delete_ids(ids_to_delete)
+                     app.logger.info(f"Deleted {len(ids_to_delete)} annotations for worldline {id}")
+        except Exception as e:
+            app.logger.error(f"Error cleaning up annotations for worldline {id}: {e}")
+
         deleted_id = app.worldlines.delete(id)
         if deleted_id == id:
             return "ok"

@@ -6,6 +6,7 @@ from .insert_annotation import insert_annotation
 from .worldline_utilities import randomly_color_worldlines, renumber_worldlines
 from .navigation import jump_to_frame
 from .create_track import create_track
+from .delete_track import delete_active_track
 from .change_provenance import change_provenance
 from .update_frame import update_frame
 from .overwrite_zeir_checkpoint import overwrite_zeir_checkpoint
@@ -14,6 +15,6 @@ from .jump_to_next_t_ref import jump_to_next_t_ref
 __all__ = [
     "delete_annotations", "insert_local_max", "insert_annotation",
     "randomly_color_worldlines", "renumber_worldlines", "jump_to_frame",
-    "create_track", "change_provenance", "update_frame", "overwrite_zeir_checkpoint",
+    "create_track", "delete_active_track", "change_provenance", "update_frame", "overwrite_zeir_checkpoint",
     "jump_to_next_t_ref"
 ]

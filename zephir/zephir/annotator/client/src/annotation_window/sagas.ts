@@ -248,7 +248,6 @@ function* rpc_from_key(action: PayloadAction<string>) {
   yield put(saga_actions.rpc([method_idx, arg]))
 }
 
-
 function* watch_fetch_state() {
   yield takeLatest(saga_action_types.fetch_state, fetch_state)
 }

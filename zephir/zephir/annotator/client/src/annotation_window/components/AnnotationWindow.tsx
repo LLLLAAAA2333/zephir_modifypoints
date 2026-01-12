@@ -315,7 +315,7 @@ const _AnnotationWindow = (props: AnnotationWindow_props_t) => {
   const gammaBox =
     <GammaBoxBase
       left={Gamma_left}
-      top={LUT_top - 2*padding_1}
+      top={LUT_top - 2 * padding_1}
       length={LUT_slider_length / 3}
       val={props.gamma}
       handler={props.actions.set_gamma} />
@@ -338,15 +338,17 @@ const _AnnotationWindow = (props: AnnotationWindow_props_t) => {
         break;
       }
       case "V": {
-        if (shift) props.actions.set_z(props.z + 0.2)
-        else if (ctrl) props.actions.set_z(props.z + 0.02)
-        else props.actions.set_z(props.z + 0.05)
+        const step = 1.0 / Math.max(props.window_state.shape_z, 1)
+        if (shift) props.actions.set_z(props.z + 10 * step)
+        else if (ctrl) props.actions.set_z(props.z + step)
+        else props.actions.set_z(props.z + step)
         break;
       }
       case "C": {
-        if (shift) props.actions.set_z(props.z - 0.2)
-        else if (ctrl) props.actions.set_z(props.z - 0.01)
-        else props.actions.set_z(props.z - 0.05)
+        const step = 1.0 / Math.max(props.window_state.shape_z, 1)
+        if (shift) props.actions.set_z(props.z - 10 * step)
+        else if (ctrl) props.actions.set_z(props.z - step)
+        else props.actions.set_z(props.z - step)
         break;
       }
       case "R": {
@@ -428,15 +430,17 @@ const _AnnotationWindow = (props: AnnotationWindow_props_t) => {
         left={window_panel_left}
         top={window_panel_top} />
 
-      <div style={{ position: "absolute",
+      <div style={{
+        position: "absolute",
         left: annotation_panel_left,
-        width: "340px" }}>
+        width: "340px"
+      }}>
 
-        <AnnotationPanel/>
+        <AnnotationPanel />
 
-        <ProvenancePanel/>
+        <ProvenancePanel />
 
-        <WorldlinesPanel/>
+        <WorldlinesPanel />
 
       </div>
 
