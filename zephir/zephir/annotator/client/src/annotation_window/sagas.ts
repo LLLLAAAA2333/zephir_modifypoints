@@ -163,10 +163,24 @@ function* adjust_selected_worldline(
 
   } else {
 
-    const new_w = w + action.payload
     const worldlines = yield select(worldlines_selectors.get_worldlines)
-    const n = Object.keys(worldlines).length
-    const new_id = ((new_w % n) + n) % n
+    // Get all IDs as numbers and sort them numerically
+    const ids = Object.keys(worldlines).map(Number).sort((a, b) => a - b)
+
+    if (ids.length === 0) {
+      // Should not happen if w is not null, but good to be safe
+      return
+    }
+
+    const current_idx = ids.indexOf(w)
+
+    // Calculate new index with wrap-around
+    const n = ids.length
+    const offset = action.payload || 0
+    // (current_idx + offset) % n, but handling negative numbers correctly in JS
+    const new_idx = ((((current_idx + offset) % n) + n) % n)
+
+    const new_id = ids[new_idx]
 
     yield put(saga_actions.set_selected_worldline(new_id))
 

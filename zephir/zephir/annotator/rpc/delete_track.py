@@ -2,7 +2,7 @@ from logging import Logger
 from pathlib import Path
 from typing import List
 
-from ..data import AnnotationTable, WorldlineTable
+from ..data import AnnotationTable, WorldlineTable, save_annotations
 from ._utilities import default_args
 
 @default_args("_this, _now, *, _ACTIVE")
@@ -35,7 +35,6 @@ def delete_active_track(
     if hasattr(annotations, 'df'):
         try:
             # Find all annotations with this worldline_id
-            # Using dataframe filtering assumes pandas backend which seems true based on data/io.py
             ids_to_delete = annotations.df[annotations.df['worldline_id'] == wl_id]['id'].tolist()
             if ids_to_delete:
                 annotations.delete_ids(ids_to_delete)
@@ -45,9 +44,15 @@ def delete_active_track(
 
     # 2. Delete the worldline itself
     worldlines.delete(wl_id)
-    logger.info(f"Deleted worldline {wl_id}")
+    
+    # 3. Save changes to ensure persistence
+    try:
+        save_annotations(annotations, worldlines, dataset)
+        logger.info(f"Deleted worldline {wl_id} and saved to disk.")
+    except Exception as e:
+        logger.error(f"Failed to save changes after deleting worldline {wl_id}: {e}")
 
-    # 3. Return actions to update frontend state
+    # 4. Return actions to update frontend state
     return [
         {
             "type": "worldlines/delete_worldline_local",
