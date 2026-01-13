@@ -351,6 +351,21 @@ def convert_annotations_to_neuron_pt_tuple(
     np.save(output_path, new_neuron_pt_tuple.squeeze())
     print(f"Converted and cleaned neuron_pt_tuple saved to {output_path}")
 
+    # 6. Overwrite annotations.h5 with the cleaned data
+    zephir_folder = os.path.dirname(annotations_path)
+    print(f"Overwriting annotations.h5 in {zephir_folder} with cleaned data...")
+    create_zephir_annotations_from_npy(new_neuron_pt_tuple, zephir_folder, **kwargs)
+    print("Overwrite complete.")
+
+    # 7. Delete worldlines.h5 to force regeneration (and fix potential corruption)
+    worldline_path = os.path.join(zephir_folder, 'worldlines.h5')
+    if os.path.exists(worldline_path):
+        try:
+            os.remove(worldline_path)
+            print(f"Deleted {worldline_path} to force regeneration on next load.")
+        except Exception as e:
+            print(f"Warning: Failed to delete {worldline_path}: {e}")
+
 
 # %%
 if __name__ == "__main__":
