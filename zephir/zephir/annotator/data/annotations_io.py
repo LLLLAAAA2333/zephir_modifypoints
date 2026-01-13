@@ -228,7 +228,7 @@ def cleanup_worldlines(A: AnnotationTable, W: WorldlineTable
     update_wid = {used_W[i]: new_ids[i] for i in range(N)}
     update_wid[0] = 0
 
-    A.df.worldline_id = A.df.worldline_id.apply(lambda x: update_wid)
+    A.df.worldline_id = A.df.worldline_id.apply(lambda x: update_wid[x])
 
     W_new = WorldlineTable()
     W_new._insert_and_preserve_id(Worldline())
