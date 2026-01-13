@@ -132,10 +132,11 @@ def create_zephir_annotations_from_npy(neuron_pt_tuple, zephir_folder, **kwargs)
             f.create_dataset('/y', shape=(0,), maxshape=max_shape, dtype='float32')
             f.create_dataset('/z', shape=(0,), maxshape=max_shape, dtype='float32')
             f.create_dataset('/id', shape=(0,), maxshape=max_shape, dtype='uint32')
-            f.create_dataset('/parent_id', shape=(0,), maxshape=max_shape, dtype='uint16')
-            f.create_dataset('/worldline_id', shape=(0,), maxshape=max_shape, dtype='uint8')
+            f.create_dataset('/parent_id', shape=(0,), maxshape=max_shape, dtype='uint32')
+            f.create_dataset('/worldline_id', shape=(0,), maxshape=max_shape, dtype='uint32')
             f.create_dataset('/provenance', shape=(0,), maxshape=max_shape, dtype='S4')
             f.create_dataset('/t_idx', shape=(0,), maxshape=max_shape, dtype='uint16')
+            f.create_dataset('/abs_t_idx', shape=(0,), maxshape=max_shape, dtype='uint32')
 
             def append_frame(frame_data, t_idx):
                 if frame_data is None or frame_data.size == 0:
@@ -153,12 +154,15 @@ def create_zephir_annotations_from_npy(neuron_pt_tuple, zephir_folder, **kwargs)
                 f['/z'][-n:] = frame_data[:, 2] / (z_ratio * depth)
 
                 f['/worldline_id'].resize(new_size, axis=0)
-                f['/worldline_id'][-n:] = np.arange(0, n)
+                f['/worldline_id'][-n:] = np.arange(0, n, dtype='uint32')
                 f['/provenance'].resize(new_size, axis=0)
                 f['/provenance'][-n:] = np.array(['ANTT'] * n, dtype='S4')
 
                 f['/t_idx'].resize(new_size, axis=0)
                 f['/t_idx'][-n:] = np.full(n, t_idx, dtype='uint16')
+                
+                f['/abs_t_idx'].resize(new_size, axis=0)
+                f['/abs_t_idx'][-n:] = np.full(n, t_idx, dtype='uint32')
 
                 current_start = new_size - n
                 id_values = np.arange(current_start, current_start + n, dtype='uint32')
@@ -166,7 +170,8 @@ def create_zephir_annotations_from_npy(neuron_pt_tuple, zephir_folder, **kwargs)
                 f['/id'].resize(new_size, axis=0)
                 f['/id'][-n:] = id_values + 1
                 f['/parent_id'].resize(new_size, axis=0)
-                f['/parent_id'][-n:] = np.full(n, t_idx + 1, dtype='uint16')
+                # Set parent_id to 0 (none) to avoid incorrect lineage linking
+                f['/parent_id'][-n:] = np.zeros(n, dtype='uint32')
 
             for t_idx in range(total_t):
                 neuron_data = neuron_pt_tuple[t_idx]
