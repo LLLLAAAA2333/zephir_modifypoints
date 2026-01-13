@@ -117,6 +117,12 @@ class DataclassTableBase:
 
     def insert(self, data):
 
+        # Re-verify next_id to ensure it hasn't fallen behind existing IDs
+        if not self.df.empty and 'id' in self.df:
+             current_max = self.df['id'].max()
+             if not pd.isna(current_max):
+                 self.next_id = max(self.next_id, int(current_max) + 1)
+
         data.id = np.uint32(self.next_id)
         row = pd.DataFrame(asdict(data), index=(0, ))
         self.df = pd.concat([self.df, row], ignore_index=True)
